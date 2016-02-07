@@ -1,0 +1,13 @@
+[type]
+	Arg = class ste_arg
+	Arglist = class ste_arglist
+	Function = class ste_function
+
+	Template = class ste_template
+
+	ClassWriter = class ste_class_writer
+	BaseClassWriter = class ste_base_class_writer
+	MethodBodyWriter = class ste_method_body_writer
+	MethodWriter = class ste_method_writer
+	CompleteClassWriter = class ste_complete_class_writer
+	ClassesWriter = class ste_classes_writer

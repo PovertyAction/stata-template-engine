@@ -1,0 +1,279 @@
+Stata Template Engine
+=====================
+
+The Stata Template Engine (STE) is a framework for [Project Mata](https://github.com/PovertyAction/project-mata) projects that write dynamic text files, including do-files.
+
+STE allows you to build templates that are a mix of raw text and dynamic Mata code. STE then compiles them to Mata classes that write dynamic text files.
+
+Dynamic text files
+------------------
+
+This readme follows an extended example. Find the example files [here](https://github.com/PovertyAction/ste-example).
+
+We wish to create an ado-file that writes a do-file to complete an important but challengingly nuanced task: generate a random treatment variable. We'll name the program `randomdo`.
+
+Following Bill Gould's [outline](http://blog.stata.com/2012/08/03/using-statas-random-number-generators-part-2-drawing-without-replacement/), the do-file should look like this:
+
+```stata
+version [user's version number]
+
+set seed [seed]
+
+use [dataset], clear
+
+sort [variables that jointly uniquely identify observations]
+
+generate double u1 = runiform()
+generate double u2 = runiform()
+
+isid u1 u2
+sort u1 u2
+
+generate treatment = mod(_n - 1, [number of treatment groups]) + 1
+```
+
+STE allows us to write a template like this and then convert it to a Mata class that we can use in our ado-file.
+
+Simple template
+---------------
+
+Use `<%= %>` tags in templates to insert Mata values. Say that we have Mata variables for the seed, dataset path, unique `varlist`, and number of treatment groups. Then the template might look like this:
+
+```
+version <%= strofreal(callersversion()) %>
+
+set seed <%= seed %>
+
+use "<%= dataset %>", clear
+
+isid <%= unique %>
+sort <%= unique %>
+
+generate double u1 = runiform()
+generate double u2 = runiform()
+
+isid u1 u2
+sort u1 u2
+
+generate treatment = mod(_n - 1, <%= groups %>) + 1
+```
+
+This results in a Mata class like this:
+
+```stata
+class `RandomWriter' {
+	public void write_randomize()
+}
+
+void `RandomWriter'::write_randomize()
+{
+	write("version ")
+	write(strofreal(callersversion()))
+	put()
+	put()
+	write("set seed ")
+	write(seed)
+	put()
+	put()
+	write(`"use ""')
+	write(dataset)
+	put(`"", clear"')
+	put()
+	write("isid ")
+	write(unique)
+	put()
+	write("sort ")
+	write(unique)
+	put()
+	put()
+	put("generate double u1 = runiform()")
+	put("generate double u2 = runiform()")
+	put()
+	put("isid u1 u2")
+	put("sort u1 u2")
+	put()
+	write("generate treatment = mod(_n - 1, ")
+	write(groups)
+	put(") + 1")
+}
+```
+
+Adding Mata logic
+-----------------
+
+`<%= %>` tags evaluate a Mata expression then write the result. Use `<% %>` tags to execute Mata statements without writing their results.
+
+For example, we wish to add an option `sample()` to `randomdo` allowing users to select a random sample of the dataset before generating the treatment variable. We update the template as follows:
+
+```stata
+...
+
+use "<%= dataset %>", clear
+
+<% if (sample != "") { %>
+sample <%= sample %>, count
+
+<% } %>
+isid <%= unique %>
+sort <%= unique %>
+
+...
+```
+
+`` `RandomWriter'::write_randomize()`` now looks like this:
+
+```stata
+void `RandomWriter'::write_randomize()
+{
+	...
+
+	write(`"use ""')
+	write(dataset)
+	put(`"", clear"')
+	put()
+
+	if (sample != "") {
+		write("sample ")
+		write(sample)
+		put(", count")
+		put()
+	}
+
+	...
+}
+```
+
+Multiple templates and template arguments
+-----------------------------------------
+
+STE supports multiple templates. Each is written to its own method.
+
+`randomdo` includes option `orthog()` to complete orthogonality checks of the new random treatment variable. The user specifies a list of variables to cross-tabulate against `treatment`.
+
+We create a new template:
+
+```stata
+args(string scalar variables)
+foreach var of varlist <%= variables %> {
+	tabulate `var' treatment
+}
+```
+
+Note the `args()` statement at the top of the template. This tells STE that the template's method takes `variables` as an argument.
+
+The template compiles to the following method:
+
+```stata
+void `RandomWriter'::write_orthog(string scalar variables)
+{
+	write("foreach var of varlist ")
+	write(variables)
+	put(" {")
+	put(char(9) + "tabulate \`var' treatment")
+	put("}")
+}
+```
+
+Class hierarchy
+---------------
+
+Each set of templates actually requires *three* classes, not one. STE automatically generates two of them; we must create the third.
+
+STE classes include a method for each template. These methods call `write()` and `put()`, which are methods that we must define.
+
+Templates may also use other class variables and methods. For example, `write_randomize()` references several variables, including `seed` and `dataset`.
+
+To support this, we write a *control class* that defines `write()`, `put()`, and any other variables and methods that the templates use. The final, complete class (`` `RandomWriter'`` above) will extend the control class.
+
+The control class itself extends an autogenerated base class that includes virtual methods for the templates. This allows the control class to reference the template methods before they are defined in the complete class.
+
+To summarize, each set of templates requires this class hierarchy:
+
+1. Base class (autogenerated). Includes virtual methods for the templates so that the control class may reference them.
+2. Control class (user-defined). Extends the base class. Defines `write()`, `put()`, and class variables and helper methods for the templates. Most control logic belongs here.
+3. Complete class (autogenerated). Extends the control class. Defines the template methods.
+
+Example control class
+---------------------
+
+The control class for `randomdo` needs to define `write()` and `put()`. It also needs to define the variables that the templates use. Lastly, we'll add a method named `write_all()` that writes the templates in the correct order.
+
+```stata
+class `Control' extends `BaseWriter' {
+	public:
+		virtual void write(), put()
+		void init(), write_all()
+
+	private:
+		`SS' filename, seed, dataset, unique, groups, sample, orthog
+		`FileHandleS' fh
+}
+
+// Pseudo-constructor to receive template inputs
+void `Control'::init(
+	`SS' filename,
+	`SS' seed,
+	`SS' dataset,
+	`SS' unique,
+	`SS' groups,
+	`SS' sample,
+	`SS' orthog)
+{
+	this.filename = filename
+	this.seed = seed
+	...
+	this.orthog = orthog
+}
+
+// Main control logic
+void `Control'::write_all()
+{
+	fh = fopen(filename, "w")
+
+	write_randomize()
+	if (orthog != "") {
+		put()
+		write_orthog(orthog)
+	}
+
+	fclose(fh)
+}
+
+// Override write() and put().
+
+void `Control'::write(`SS' s)
+	fwrite(fh, s)
+
+void `Control'::put(|`SS' s)
+	fput(fh, s)
+```
+
+Ado wrapper
+-----------
+
+`randomdo` essentially becomes an ado-file wrapper of `` `RandomWriter'``. To see this, find `randomdo.do` and `randomdo.mata` among the [example files](https://github.com/PovertyAction/ste-example).
+
+Running STE
+-----------
+
+STE runs as an ado-file. Specify a directory of templates, the path to write the base class, the path to write the complete class, and the name of the control class. (Use the name of the control class's Project Mata type macro.)
+
+```stata
+ste
+	using templates_directory,
+	base(classes/BaseWriter.mata)
+	control(Control)
+	complete(classes/CompleteWriter.mata)
+```
+
+Temporary files
+---------------
+
+STE writes template classes in progress to the Stata temporary file directory. If it results in an error, it will not remove the files. Usually this is not a concern, but take care if your templates contain sensitive data.
+
+Installation
+------------
+
+STE uses [Project Mata](https://github.com/PovertyAction/project-mata). Clone this repository and add `src/build` to your ado-path. Build `ste.ado` by running `write_ste_ado.ado`.
+
+STE requires the SSC package `specialexp`.
