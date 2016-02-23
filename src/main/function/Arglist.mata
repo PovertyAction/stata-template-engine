@@ -14,6 +14,22 @@ class `Arglist' {
 
 	private:
 		pointer(`ArgS') rowvector args
+		`SS' strip_comments()
+}
+
+`SS' `Arglist'::strip_comments(`SS' arglist)
+{
+	`RS' i
+	`SS' strip
+	`SR' tokens
+
+	pragma unset strip
+	tokens = tokens(arglist, char(10) + char(13))
+	for (i = 1; i <= (::length(tokens)); i++)
+		if (!regexm(tokens[i], sprintf("^[ %s]*//", char(9))))
+			strip = strip + tokens[i]
+
+	return(strip)
 }
 
 void `Arglist'::init(`SS' arglist)
@@ -23,7 +39,7 @@ void `Arglist'::init(`SS' arglist)
 	`Tokenizer' t
 
 	t = tokeninit(",", "", "", `False', `False')
-	tokenset(t, arglist)
+	tokenset(t, strip_comments(arglist))
 	tokens = tokengetall(t)
 
 	args = J(1, ::length(tokens), NULL)
