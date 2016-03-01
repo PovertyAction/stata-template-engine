@@ -204,7 +204,7 @@ class `Control' extends `BaseWriter' {
 		virtual void write(), put()
 		void init(), write_all()
 
-	private:
+	protected:
 		`SS' filename, seed, dataset, unique, groups, sample, orthog
 		`FileHandleS' fh
 }
